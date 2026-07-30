@@ -15,7 +15,7 @@ Open-source Screen Studio for Windows. Rust workspace. The product is **render q
 
 ## Current state / next milestones
 1. ✅ Engine (springs, cursor solver, zoom clustering, camera solver, project format) — tested.
-2. 🔜 Windows capture backend: windows-capture crate, WithoutCursor, LL hooks, QPC epoch. Land behind win-capture feature; prove on windows-latest CI.
+2. 🚧 Windows capture backend: video path landed (`WinRecorder`: monitor → cursor-less hardware-encoded mp4, Win10 border fallback, real-screen smoke test `#[ignore]`d). Next: WH_MOUSE_LL/WH_KEYBOARD_LL hook thread, events rebased to first-frame epoch (see `timebase`), events.jsonl. Note: the win-capture feature pulls in an edition-2024 dep, so building *with the feature* needs rustc ≥1.85; the ≈1.75 MSRV applies to our own code and the default feature set.
 3. 🔜 Offline renderer: decode → crop → cursor composite → style → encode. Start CPU (image + minimp4/ffmpeg), then wgpu.
 4. 🔜 Tauri editor shell with mock-backend preview so UI work never requires Windows.
 

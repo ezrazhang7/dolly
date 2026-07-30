@@ -25,7 +25,8 @@ Why engine-first: camera *feel* is tunable in unit tests against synthetic sessi
 ### dolly-capture
 - `Recorder` trait + `RecordingArtifacts`.
 - `MockRecorder` — deterministic synthetic session (eased mouse travel, clicks, typing burst) for developing editor/renderer on any OS.
-- `win` module (feature `win-capture`, Windows-only): windows-capture crate, CursorCaptureSettings::WithoutCursor, LL input hooks, QPC shared epoch.
+- `timebase` — pure QPC↔ms math, unit-tested on all platforms. Key fact: the mp4's t=0 is the *first encoded frame's* `SystemRelativeTime` (windows-capture rebases internally), so input events are rebased against that instant, not against `start()`.
+- `win` module (feature `win-capture`, Windows-only): `WinRecorder` records one monitor via windows-capture 2.0 straight to a hardware-encoded mp4, `CursorCaptureSettings::WithoutCursor` (hard requirement, Win10 2004+). Border suppression needs Win11; on Win10 it falls back to `DrawBorderSettings::Default` — the system border is on-screen-only and never appears in captured frames. Real-screen smoke test is `#[ignore]`d (needs an interactive desktop). Next: LL input hooks + events.jsonl.
 
 ## Planned: renderer + app
 - **Renderer**: per output frame — decode source frame → crop to CameraFrame rect → composite vector cursor at CursorFrame pos (scale/blur from speed) → inset/corner-radius/shadow/background → encode. GPU path: wgpu offscreen; encode via Media Foundation (already in windows-capture) or bundled ffmpeg.

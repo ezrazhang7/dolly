@@ -18,6 +18,8 @@
 //! - **Clock sync:** both streams stamp from the same QPC epoch taken at
 //!   `start()`, so cursor overlay stays sample-accurate against video frames.
 
+pub mod timebase;
+
 use dolly_core::events::{MouseButton, RawEvent, RecordingMeta};
 
 /// What a completed recording hands back to the app.
@@ -117,17 +119,11 @@ impl Recorder for MockRecorder {
 }
 
 // ---------------------------------------------------------------------------
-// Windows backend skeleton (compiled only on Windows with `win-capture`).
+// Windows backend (compiled only on Windows with `win-capture`).
 // ---------------------------------------------------------------------------
 
 #[cfg(all(windows, feature = "win-capture"))]
-pub mod win {
-    //! Real backend. Implementation order:
-    //! 1. Graphics Capture session → mp4 via windows-capture's VideoEncoder,
-    //!    CursorCaptureSettings::WithoutCursor, DrawBorderSettings::WithoutBorder.
-    //! 2. WH_MOUSE_LL / WH_KEYBOARD_LL hook thread → Vec<RawEvent>, QPC clock.
-    //! 3. Shared epoch + DPI mapping; write events.jsonl beside the mp4.
-}
+pub mod win;
 
 #[cfg(test)]
 mod tests {
