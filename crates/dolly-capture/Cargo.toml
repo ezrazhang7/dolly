@@ -1,0 +1,16 @@
+[package]
+name = "dolly-capture"
+description = "Screen capture + raw input logging. Windows.Graphics.Capture backend, mock backend for dev"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dolly-core = { path = "../dolly-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+win-capture = []
