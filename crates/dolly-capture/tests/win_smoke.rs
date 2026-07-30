@@ -34,4 +34,10 @@ fn records_two_seconds_of_primary_monitor() {
     );
     let size = std::fs::metadata(&out).unwrap().len();
     assert!(size > 10_000, "mp4 suspiciously small: {size} bytes");
+
+    // The sidecar must exist beside the mp4 and parse back to the same events
+    // stop() returned (may legitimately be empty if nothing was touched).
+    let sidecar = out.with_extension("events.jsonl");
+    let reloaded = dolly_core::events::from_jsonl(&std::fs::read_to_string(&sidecar).unwrap());
+    assert_eq!(reloaded, artifacts.events, "sidecar does not round-trip stop()'s events");
 }

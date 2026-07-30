@@ -1,16 +1,21 @@
 //! Real Windows backend. Implementation order (see lib.rs skeleton note):
 //! 1. ✅ Graphics Capture session → mp4 via windows-capture's VideoEncoder,
 //!    `CursorCaptureSettings::WithoutCursor`, `DrawBorderSettings::WithoutBorder`.
-//! 2. 🔜 WH_MOUSE_LL / WH_KEYBOARD_LL hook thread → `Vec<RawEvent>`, QPC clock,
-//!    rebased to the first video frame's timestamp (see `timebase`).
-//! 3. 🔜 Write events.jsonl beside the mp4.
+//! 2. ✅ WH_MOUSE_LL / WH_KEYBOARD_LL hook thread → `Vec<RawEvent>`, QPC clock,
+//!    rebased to the first video frame's timestamp (see `timebase` + `input`).
+//! 3. ✅ Write the `<video>.events.jsonl` sidecar beside the mp4.
+//!
+//! Later: `WindowFocus` events via `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` —
+//! the schema already has the variant, nothing here blocks on it.
 
+mod input;
 mod video;
 
 use std::path::PathBuf;
 
-use dolly_core::events::RecordingMeta;
-use windows::Win32::Graphics::Gdi::HMONITOR;
+use dolly_core::events::{to_jsonl, RecordingMeta};
+use windows::Win32::Foundation::RECT;
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
 use windows::Win32::UI::HiDpi::{
     GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     MDT_EFFECTIVE_DPI,
@@ -25,6 +30,7 @@ use windows_capture::settings::{
 
 use crate::timebase::ticks_to_ms;
 use crate::{Recorder, RecordingArtifacts};
+use input::InputHook;
 use video::{VideoFlags, VideoHandler};
 
 type HandlerError = Box<dyn std::error::Error + Send + Sync>;
@@ -38,8 +44,12 @@ pub enum WinCaptureError {
     Monitor(String),
     Capture(String),
     Encoder(String),
+    /// Low-level input hooks could not be installed.
+    Input(String),
     /// Capture stopped before a single frame arrived.
     NoFrames,
+    /// The events.jsonl sidecar could not be written.
+    Sidecar(String),
 }
 
 /// Records one monitor, cursor excluded, straight to an hardware-encoded mp4.
@@ -60,9 +70,13 @@ pub struct WinRecorder {
 /// Everything captured at `start()` that `stop()` needs to build the meta.
 struct Session {
     control: CaptureControl<VideoHandler, HandlerError>,
+    input: InputHook,
     width: u32,
     height: u32,
     scale_factor: f64,
+    /// Captured monitor's top-left in virtual-screen physical pixels, so hook
+    /// coordinates (also virtual-screen global) can be mapped to surface space.
+    origin: (i32, i32),
 }
 
 impl WinRecorder {
@@ -74,6 +88,20 @@ impl WinRecorder {
             bitrate: 15_000_000,
             session: None,
         }
+    }
+}
+
+/// Top-left of the monitor in virtual-screen physical pixels (per-monitor-v2
+/// awareness is set in `start`, so this is unvirtualized). `(0, 0)` on failure —
+/// correct for the common single-primary-monitor case.
+fn monitor_origin(monitor: &Monitor) -> (i32, i32) {
+    let hmonitor = HMONITOR(monitor.as_raw_hmonitor());
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    if unsafe { GetMonitorInfoW(hmonitor, &mut info) }.as_bool() {
+        let RECT { left, top, .. } = info.rcMonitor;
+        (left, top)
+    } else {
+        (0, 0)
     }
 }
 
@@ -109,6 +137,7 @@ impl Recorder for WinRecorder {
         let width = monitor.width().map_err(|e| WinCaptureError::Monitor(format!("{e}")))?;
         let height = monitor.height().map_err(|e| WinCaptureError::Monitor(format!("{e}")))?;
         let scale_factor = monitor_scale_factor(&monitor);
+        let origin = monitor_origin(&monitor);
 
         let try_start = |border| {
             let settings = Settings::new(
@@ -149,12 +178,23 @@ impl Recorder for WinRecorder {
             other => WinCaptureError::Capture(format!("{other}")),
         })?;
 
-        self.session = Some(Session { control, width, height, scale_factor });
+        // Hooks after the encoder is live: pre-first-frame events get dropped by
+        // the epoch rebase anyway, and this way a hook-install failure tears the
+        // capture back down instead of leaking a running encoder thread.
+        let input = match InputHook::start() {
+            Ok(input) => input,
+            Err(e) => {
+                let _ = control.stop();
+                return Err(WinCaptureError::Input(format!("{e}")));
+            }
+        };
+
+        self.session = Some(Session { control, input, width, height, scale_factor, origin });
         Ok(())
     }
 
     fn stop(&mut self) -> Result<RecordingArtifacts, WinCaptureError> {
-        let Session { control, width, height, scale_factor } =
+        let Session { control, input, width, height, scale_factor, origin } =
             self.session.take().ok_or(WinCaptureError::NotStarted)?;
 
         // Keep a handle to the handler: stop() joins the capture thread and
@@ -169,6 +209,17 @@ impl Recorder for WinRecorder {
 
         let epoch = handler.first_ts_100ns.ok_or(WinCaptureError::NoFrames)?;
         let last = handler.last_ts_100ns.unwrap_or(epoch);
+        drop(handler);
+
+        // Stop the hooks and rebase every event onto the first-frame epoch.
+        let events = input.finalize(epoch, origin, (width, height));
+
+        // Sidecar convention: `<video stem>.events.jsonl` beside the mp4, so
+        // the pair is discoverable from the video path alone and two
+        // recordings in one directory never share a sidecar.
+        let sidecar = self.output_path.with_extension("events.jsonl");
+        std::fs::write(&sidecar, to_jsonl(&events))
+            .map_err(|e| WinCaptureError::Sidecar(format!("{}: {e}", sidecar.display())))?;
 
         Ok(RecordingArtifacts {
             video_path: self.output_path.display().to_string(),
@@ -179,11 +230,10 @@ impl Recorder for WinRecorder {
                 scale_factor,
                 // Timeline length = span of encoded frames. The mp4's t=0 is
                 // the first frame (the encoder rebases), so `epoch` is also
-                // what step 2 rebases input-event timestamps against.
+                // what input-event timestamps are rebased against.
                 duration_ms: ticks_to_ms(last, epoch),
             },
-            // Step 2: input hook events land here.
-            events: Vec::new(),
+            events,
         })
     }
 }
