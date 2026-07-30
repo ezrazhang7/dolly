@@ -1,0 +1,25 @@
+[package]
+name = "dolly-app"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Dolly editor shell: preview canvas + zoom timeline + style sidebar (Tauri 2)"
+
+# Standalone workspace on purpose: the root workspace excludes this crate so
+# plain `cargo test --workspace` never needs a webview toolchain (ubuntu CI).
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+dolly-core = { path = "../dolly-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["protocol-asset"] }
+
+[target.'cfg(windows)'.dependencies]
+dolly-capture = { path = "../dolly-capture", features = ["win-capture"] }
+
+[target.'cfg(not(windows))'.dependencies]
+dolly-capture = { path = "../dolly-capture" }

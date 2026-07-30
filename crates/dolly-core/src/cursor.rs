@@ -8,8 +8,9 @@
 
 use crate::events::RawEvent;
 use crate::spring::Spring2;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CursorFrame {
     pub t: f64,
     pub x: f64,

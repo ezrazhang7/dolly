@@ -18,6 +18,7 @@
 //! - **Clock sync:** both streams stamp from the same QPC epoch taken at
 //!   `start()`, so cursor overlay stays sample-accurate against video frames.
 
+pub mod mapping;
 pub mod timebase;
 
 use dolly_core::events::{MouseButton, RawEvent, RecordingMeta};

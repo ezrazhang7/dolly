@@ -7,6 +7,15 @@
 //!
 //! Later: `WindowFocus` events via `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` —
 //! the schema already has the variant, nothing here blocks on it.
+//!
+//! ## Known limitations (documented, not solved — every competitor shares them)
+//! - **Elevated windows:** LL hooks in a non-elevated process don't receive
+//!   input aimed at elevated (admin) windows — those stretches record video
+//!   with no cursor/click events, so no auto-zoom there. UIPI by design;
+//!   running Dolly elevated would lift it, we don't ask users to.
+//! - **UAC / secure desktop:** Windows.Graphics.Capture can't see the secure
+//!   desktop, so frames blank (or freeze) for the duration of a UAC prompt,
+//!   Ctrl+Alt+Del, or the lock screen. Recording resumes on its own.
 
 mod input;
 mod video;

@@ -40,4 +40,28 @@ fn records_two_seconds_of_primary_monitor() {
     let sidecar = out.with_extension("events.jsonl");
     let reloaded = dolly_core::events::from_jsonl(&std::fs::read_to_string(&sidecar).unwrap());
     assert_eq!(reloaded, artifacts.events, "sidecar does not round-trip stop()'s events");
+
+    // Timestamps must be monotonic and inside the recording timeline.
+    for pair in artifacts.events.windows(2) {
+        assert!(pair[0].t() <= pair[1].t(), "events out of order: {pair:?}");
+    }
+    if let Some(last) = artifacts.events.last() {
+        assert!(last.t() >= 0.0 && last.t() <= artifacts.meta.duration_ms + 100.0);
+    }
+
+    // The whole point of the artifacts: the engine must accept them as-is.
+    let plan = dolly_core::render_plan(
+        &artifacts.events,
+        artifacts.meta.duration_ms,
+        artifacts.meta.fps,
+        artifacts.meta.width as f64,
+        artifacts.meta.height as f64,
+        &dolly_core::camera::CameraConfig::default(),
+        dolly_core::cursor::CursorConfig::default(),
+    );
+    assert_eq!(plan.cursor.len(), plan.frame_times_ms.len());
+    assert!(
+        plan.frame_times_ms.len() as f64 >= artifacts.meta.duration_ms / 1000.0 * artifacts.meta.fps,
+        "render plan shorter than the recording"
+    );
 }

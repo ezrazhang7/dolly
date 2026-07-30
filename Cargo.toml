@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["crates/dolly-core", "crates/dolly-capture"]
+# The Tauri app is its own workspace: it only builds on desktop platforms with
+# webview toolchains present, and keeping it out lets `cargo test --workspace`
+# stay green on the plain ubuntu CI job.
+exclude = ["crates/dolly-app"]
 
 [workspace.package]
 version = "0.1.0"

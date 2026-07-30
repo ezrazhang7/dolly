@@ -24,13 +24,16 @@
 //! Hook coordinates are virtual-screen global physical pixels (the process is
 //! per-monitor-DPI-aware, set in `mod.rs::start`). [`InputHook::finalize`]
 //! subtracts the captured monitor's rect origin to get surface-space pixels and
-//! drops events that fall outside the monitor (multi-monitor setups).
+//! drops events that fall outside the monitor (multi-monitor setups). The
+//! rebase + mapping math itself is pure and lives in [`crate::mapping`] so it
+//! unit-tests off-Windows.
 
 use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::JoinHandle;
 
 use dolly_core::events::{MouseButton, RawEvent};
+use crate::mapping::{rebase_and_map, Kind, Stamped};
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
@@ -41,8 +44,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_XBUTTONDOWN, WM_XBUTTONUP,
 };
-
-use crate::timebase::{qpc_to_100ns, ticks_to_ms};
 
 #[derive(Debug)]
 pub(crate) enum WinInputError {
@@ -57,22 +58,6 @@ impl std::fmt::Display for WinInputError {
             WinInputError::ThreadDied => write!(f, "hook thread died before install"),
         }
     }
-}
-
-/// One captured input event, still on the raw QPC clock and in virtual-screen
-/// global pixels. Rebased and mapped to surface-space by [`InputHook::finalize`].
-struct Stamped {
-    qpc: i64,
-    kind: Kind,
-}
-
-enum Kind {
-    Move { x: i32, y: i32 },
-    Down { x: i32, y: i32, button: MouseButton },
-    Up { x: i32, y: i32, button: MouseButton },
-    Wheel { x: i32, y: i32, dx: f64, dy: f64 },
-    /// Key identity deliberately absent — see module privacy note.
-    KeyPress,
 }
 
 // The hook procs are plain `extern "system"` functions with no state parameter,
@@ -204,52 +189,6 @@ impl InputHook {
     }
 }
 
-/// Pure rebase + surface-space mapping, factored out of [`InputHook::finalize`]
-/// so it is unit-testable without a live hook thread. Drops events before the
-/// epoch and mouse events outside the monitor rect; returns them time-sorted.
-fn rebase_and_map(
-    raw: impl IntoIterator<Item = Stamped>,
-    qpc_freq: i64,
-    epoch_100ns: i64,
-    origin: (i32, i32),
-    size: (u32, u32),
-) -> Vec<RawEvent> {
-    let (ox, oy) = origin;
-    let (w, h) = (size.0 as i32, size.1 as i32);
-    // Map a global point into surface space, or None if it lands off-monitor.
-    let map = |x: i32, y: i32| -> Option<(f64, f64)> {
-        let (sx, sy) = (x - ox, y - oy);
-        (sx >= 0 && sx < w && sy >= 0 && sy < h).then_some((sx as f64, sy as f64))
-    };
-
-    let mut out = Vec::new();
-    for ev in raw {
-        let t = ticks_to_ms(qpc_to_100ns(ev.qpc, qpc_freq), epoch_100ns);
-        if t < 0.0 {
-            continue; // before the first video frame
-        }
-        let event = match ev.kind {
-            Kind::Move { x, y } => map(x, y).map(|(x, y)| RawEvent::MouseMove { t, x, y }),
-            Kind::Down { x, y, button } => {
-                map(x, y).map(|(x, y)| RawEvent::MouseDown { t, x, y, button })
-            }
-            Kind::Up { x, y, button } => {
-                map(x, y).map(|(x, y)| RawEvent::MouseUp { t, x, y, button })
-            }
-            Kind::Wheel { x, y, dx, dy } => {
-                map(x, y).map(|(x, y)| RawEvent::Wheel { t, x, y, dx, dy })
-            }
-            // KeyPress has no coordinate to clip against — always kept.
-            Kind::KeyPress => Some(RawEvent::KeyPress { t }),
-        };
-        if let Some(event) = event {
-            out.push(event);
-        }
-    }
-    out.sort_by(|a, b| a.t().total_cmp(&b.t()));
-    out
-}
-
 impl Drop for InputHook {
     fn drop(&mut self) {
         // Safety net for the drop-without-finalize path (e.g. a WinRecorder
@@ -320,77 +259,5 @@ fn unhook(mouse: HHOOK, keyboard: HHOOK) {
     unsafe {
         UnhookWindowsHookEx(mouse).ok();
         UnhookWindowsHookEx(keyboard).ok();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // 10 MHz QPC (typical modern hardware): 1 tick = 0.1 µs, 10_000 ticks = 1 ms.
-    const FREQ: i64 = 10_000_000;
-    // First video frame at 500 ms since boot, in 100 ns units.
-    const EPOCH: i64 = 5_000_000;
-    // A 1920x1080 monitor whose top-left sits at virtual-screen (2560, 0) —
-    // i.e. a second monitor to the right of a primary one.
-    const ORIGIN: (i32, i32) = (2560, 0);
-    const SIZE: (u32, u32) = (1920, 1080);
-
-    // QPC count for `ms` after boot at FREQ (100ns units = ms * 10_000).
-    fn qpc_at_ms(ms: f64) -> i64 {
-        ((ms * 10_000.0) as i64 * FREQ) / 10_000_000
-    }
-
-    #[test]
-    fn maps_to_surface_space_and_rebases_time() {
-        // A click at global (2660, 100) → surface (100, 100), 100 ms in.
-        let raw = vec![Stamped {
-            qpc: qpc_at_ms(600.0), // 100 ms after the 500 ms epoch
-            kind: Kind::Down { x: 2660, y: 100, button: MouseButton::Left },
-        }];
-        let out = rebase_and_map(raw, FREQ, EPOCH, ORIGIN, SIZE);
-        assert_eq!(
-            out,
-            vec![RawEvent::MouseDown { t: 100.0, x: 100.0, y: 100.0, button: MouseButton::Left }]
-        );
-    }
-
-    #[test]
-    fn drops_events_before_first_frame() {
-        // 400 ms after boot is before the 500 ms epoch → negative t → dropped.
-        let raw = vec![Stamped { qpc: qpc_at_ms(400.0), kind: Kind::KeyPress }];
-        assert!(rebase_and_map(raw, FREQ, EPOCH, ORIGIN, SIZE).is_empty());
-    }
-
-    #[test]
-    fn drops_mouse_events_outside_the_monitor() {
-        // Global x=100 is on the *primary* monitor, left of this one's origin.
-        let raw = vec![Stamped {
-            qpc: qpc_at_ms(600.0),
-            kind: Kind::Move { x: 100, y: 100 },
-        }];
-        assert!(rebase_and_map(raw, FREQ, EPOCH, ORIGIN, SIZE).is_empty());
-    }
-
-    #[test]
-    fn keypress_survives_without_coordinates() {
-        // KeyPress has no position, so the off-monitor clip never applies to it.
-        let raw = vec![Stamped { qpc: qpc_at_ms(600.0), kind: Kind::KeyPress }];
-        let out = rebase_and_map(raw, FREQ, EPOCH, ORIGIN, SIZE);
-        assert_eq!(out, vec![RawEvent::KeyPress { t: 100.0 }]);
-    }
-
-    #[test]
-    fn output_is_time_sorted() {
-        let raw = vec![
-            Stamped { qpc: qpc_at_ms(700.0), kind: Kind::KeyPress },
-            Stamped { qpc: qpc_at_ms(600.0), kind: Kind::KeyPress },
-            Stamped { qpc: qpc_at_ms(650.0), kind: Kind::KeyPress },
-        ];
-        let ts: Vec<f64> = rebase_and_map(raw, FREQ, EPOCH, ORIGIN, SIZE)
-            .iter()
-            .map(RawEvent::t)
-            .collect();
-        assert_eq!(ts, vec![100.0, 150.0, 200.0]);
     }
 }
