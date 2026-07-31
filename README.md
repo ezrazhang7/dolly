@@ -30,9 +30,9 @@ Because the cursor is synthetic, you can resize it, restyle it, motion-blur it, 
 |---|---|
 | `dolly-core` — spring physics, cursor solver, auto-zoom clustering, camera solver, project format | ✅ implemented + unit-tested |
 | `dolly-capture` — capture/input traits + deterministic mock backend | ✅ implemented |
-| Windows capture backend (windows-capture / Graphics Capture API) | 🔜 next |
-| GPU renderer + exporter (crop → cursor composite → style frame → encode) | 🔜 |
-| Editor app (Tauri): timeline, zoom segment editing, style presets | 🔜 |
+| Windows capture backend (windows-capture / Graphics Capture API + LL input hooks → events.jsonl) | ✅ implemented |
+| Editor app (`dolly-app`, Tauri): live preview, zoom-block timeline, style sidebar, record button | ✅ first cut |
+| GPU renderer + exporter (crop → cursor composite → style frame → encode) | 🔜 next |
 | Webcam / mic / system audio | planned |
 | AI layer (auto-docs from recordings, à la Clueso) | someday |
 
@@ -43,7 +43,8 @@ The engine is deliberately platform-independent and test-driven: camera *feel* g
 ```
 crates/
 ├── dolly-core      # the brain: events → render plan (cursor + camera per frame)
-└── dolly-capture   # capture behind traits; mock backend now, Windows backend next
+├── dolly-capture   # capture behind traits; mock backend + real Windows backend
+└── dolly-app       # Tauri editor: preview canvas, zoom timeline, style sidebar
 docs/
 ├── RESEARCH.md     # competitive + technical research that shaped the design
 └── ARCHITECTURE.md # system design and key decisions
@@ -52,10 +53,12 @@ docs/
 ## Dev
 
 ```bash
-cargo test          # runs everywhere — core is platform-independent
+cargo test                          # runs everywhere — core is platform-independent
+cargo run -p dolly-capture --example record_monitor --features win-capture  # headless capture check (Windows)
+cd crates/dolly-app && cargo run    # the editor app (no npm needed — static frontend)
 ```
 
-Windows-specific code is feature-gated (`win-capture`) and built on `windows-latest` CI runners.
+The editor opens with a synthetic mock session on any OS; on Windows the ⏺ Record button captures the primary monitor for real. Windows-specific capture code is feature-gated (`win-capture`) and built on `windows-latest` CI runners; `dolly-app` is excluded from the workspace so plain `cargo test --workspace` never needs a webview toolchain.
 
 ## License
 

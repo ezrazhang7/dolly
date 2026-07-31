@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dolly</title>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand"><span class="brand-dot"></span>Dolly</div>
+  <div class="top-actions">
+    <button id="btn-mock" class="ghost" title="Load a synthetic session (works on any OS)">Mock session</button>
+    <button id="btn-record" class="rec" title="Record the primary monitor (Windows)"><span class="rec-dot"></span>Record</button>
+    <span class="spacer"></span>
+    <button id="btn-save" class="ghost">Save</button>
+    <button id="btn-export" class="primary">Export</button>
+  </div>
+</header>
+
+<main id="layout">
+  <section id="stage">
+    <div id="canvas">
+      <div id="frame">
+        <div id="screen">
+          <video id="vid" muted playsinline class="hidden"></video>
+          <div id="mockscreen">
+            <div class="m-menubar">
+              <span class="m-apple"></span><span class="m-mi w1"></span><span class="m-mi w2"></span><span class="m-mi w1"></span>
+            </div>
+            <div class="m-window">
+              <div class="m-titlebar"><span class="m-dot r"></span><span class="m-dot y"></span><span class="m-dot g"></span></div>
+              <div class="m-body">
+                <div class="m-side">
+                  <div class="m-nav on"></div><div class="m-nav"></div><div class="m-nav"></div><div class="m-nav"></div>
+                </div>
+                <div class="m-content">
+                  <div class="m-h1"></div>
+                  <div class="m-line w80"></div><div class="m-line w95"></div><div class="m-line w60"></div>
+                  <div class="m-card-row"><div class="m-card"></div><div class="m-card"></div><div class="m-card"></div></div>
+                  <div class="m-line w90"></div><div class="m-line w70"></div>
+                </div>
+              </div>
+            </div>
+            <div class="m-target t1">Get started</div>
+            <div class="m-target t2">Settings</div>
+            <div class="m-target t3">Publish</div>
+          </div>
+          <div id="ripples"></div>
+          <svg id="cursor" viewBox="0 0 28 28">
+            <path d="M6 3 L6 21.5 L10.6 17.2 L13.4 23.6 L16.4 22.3 L13.6 16 L20 16 Z"
+                  fill="#fff" stroke="#1c1c22" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div id="transport">
+      <button id="btn-play" title="Play/pause (space)">&#9654;</button>
+      <span id="timecode">0:00.0 / 0:00.0</span>
+      <span id="mockbadge" class="badge hidden">MOCK — no video, synthetic screen</span>
+      <span id="recbadge" class="badge rec hidden">RECORDING…</span>
+    </div>
+  </section>
+
+  <aside id="sidebar">
+    <div class="sec" id="sec-session">
+      <h3>Session</h3>
+      <div class="kv" id="session-info">no session</div>
+    </div>
+
+    <div class="sec">
+      <h3>Style</h3>
+      <label class="row-label">Background</label>
+      <div id="bg-swatches" class="swatches"></div>
+      <div class="row">
+        <label>Custom</label>
+        <input type="color" id="in-bgcolor" value="#3b2f63"/>
+      </div>
+      <div class="row"><label>Padding</label><input type="range" id="in-inset" min="0" max="0.16" step="0.005"/><span class="val" id="val-inset"></span></div>
+      <div class="row"><label>Corners</label><input type="range" id="in-radius" min="0" max="36" step="1"/><span class="val" id="val-radius"></span></div>
+      <div class="row"><label>Shadow</label><input type="checkbox" id="in-shadow"/></div>
+    </div>
+
+    <div class="sec">
+      <h3>Camera</h3>
+      <div class="row"><label>Auto-zoom</label><input type="checkbox" id="in-cam-on"/></div>
+      <div class="row"><label>Zoom</label><input type="range" id="in-clickzoom" min="1.2" max="3" step="0.05"/><span class="val" id="val-clickzoom"></span></div>
+      <div class="row"><label>On typing</label><input type="checkbox" id="in-typing"/></div>
+      <div class="row"><label>Pan feel</label><input type="range" id="in-panomega" min="3" max="14" step="0.5"/><span class="val" id="val-panomega"></span></div>
+      <div class="row"><label>Zoom feel</label><input type="range" id="in-zoomomega" min="2" max="10" step="0.5"/><span class="val" id="val-zoomomega"></span></div>
+      <button id="btn-redetect" class="ghost small">Re-detect zooms from input log</button>
+    </div>
+
+    <div class="sec">
+      <h3>Cursor</h3>
+      <div class="row"><label>Size</label><input type="range" id="in-cscale" min="0.6" max="2.6" step="0.1"/><span class="val" id="val-cscale"></span></div>
+      <div class="row"><label>Glide</label><input type="range" id="in-comega" min="10" max="40" step="1"/><span class="val" id="val-comega"></span></div>
+      <div class="row"><label>Dim idle</label><input type="checkbox" id="in-chide"/></div>
+    </div>
+
+    <div class="sec hidden" id="sec-segment">
+      <h3>Zoom block</h3>
+      <div class="kv" id="seg-info"></div>
+      <div class="row"><label>Zoom</label><input type="range" id="in-segzoom" min="1.1" max="3.5" step="0.05"/><span class="val" id="val-segzoom"></span></div>
+      <button id="btn-segdelete" class="danger small">Delete block</button>
+      <p class="hint">Drag the block to move it, drag its edges to resize. Right-click deletes.</p>
+    </div>
+  </aside>
+</main>
+
+<footer id="timeline">
+  <div id="ruler">
+    <div id="ticks"></div>
+    <div id="clickdots"></div>
+  </div>
+  <div id="zoomtrack">
+    <span class="track-label">ZOOM</span>
+    <div id="blocks"></div>
+  </div>
+  <div id="playhead"></div>
+</footer>
+
+<div id="toast" class="hidden"></div>
+
+<div id="empty">
+  <div class="empty-card">
+    <div class="empty-logo"></div>
+    <h2>Dolly</h2>
+    <p>Screen recordings that look deliberate.<br/>Loading a session…</p>
+  </div>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>

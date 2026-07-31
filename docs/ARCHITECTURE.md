@@ -30,9 +30,14 @@ Why engine-first: camera *feel* is tunable in unit tests against synthetic sessi
 - `win` module (feature `win-capture`, Windows-only): `WinRecorder` records one monitor via windows-capture 2.0 straight to a hardware-encoded mp4, `CursorCaptureSettings::WithoutCursor` (hard requirement, Win10 2004+). Border suppression needs Win11; on Win10 it falls back to `DrawBorderSettings::Default` — the system border is on-screen-only and never appears in captured frames. LL input hooks (`win/input.rs`) pump on a dedicated thread, QPC-stamped; `stop()` writes the `<video stem>.events.jsonl` sidecar beside the mp4. Real-screen smoke test is `#[ignore]`d (needs an interactive desktop): records ~2 s, asserts a non-empty mp4, monotonic events, sidecar round-trip, and that `render_plan` accepts the artifacts.
 - Known limitations (shared by every commercial competitor, documented in `win/mod.rs`): LL hooks don't receive input aimed at elevated windows (UIPI), and capture blanks during UAC/secure-desktop prompts.
 
-## Planned: renderer + app
-- **Renderer**: per output frame — decode source frame → crop to CameraFrame rect → composite vector cursor at CursorFrame pos (scale/blur from speed) → inset/corner-radius/shadow/background → encode. GPU path: wgpu offscreen; encode via Media Foundation (already in windows-capture) or bundled ffmpeg.
-- **App**: Tauri 2. Rust core owns capture/render; web UI for timeline + segment editing + style presets. Preview = same render_plan applied to <canvas> at interactive rate.
+### dolly-app (Tauri 2 editor shell)
+- Standalone workspace (root `Cargo.toml` excludes it) so `cargo test --workspace` never needs webview toolchains. Static no-bundler frontend in `ui/` (plain HTML/JS, `withGlobalTauri`) — no npm anywhere.
+- Backend commands: `load_mock`, `start_recording`/`stop_recording` (Windows: `WinRecorder` → `Videos/Dolly/rec-<ts>.dolly/` with capture.mp4 + events.jsonl + project.json), `solve` (re-runs `solve_cursor_path` + `solve_camera` for edited segments/settings), `regenerate_segments`, `set_style`, `save_project`, `export_video` (stub until the renderer exists).
+- Preview = live DOM composite: background/padding/corner/shadow from StyleSettings, camera crop as a CSS transform on the screen layer, synthetic SVG cursor + click ripples from the plan. Real recordings play the mp4 in a `<video>`; mock sessions show a synthetic desktop so zooms are visible.
+- Timeline: zoom segments as draggable blocks (move/resize/add-on-click/right-click delete) — edits round-trip through `solve` and live in project.json, never in pixels.
+
+## Planned: renderer
+- **Renderer**: per output frame — decode source frame → crop to CameraFrame rect → composite vector cursor at CursorFrame pos (scale/blur from speed) → inset/corner-radius/shadow/background → encode. GPU path: wgpu offscreen; encode via Media Foundation (already in windows-capture) or bundled ffmpeg. Until then the app's Export button returns a friendly stub error.
 
 ## Testing strategy
 - Core: unit tests on math invariants (no overshoot, bounds clamping, cluster behavior, pullback on idle) + integration smoke on realistic synthetic sessions.
